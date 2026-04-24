@@ -32,16 +32,7 @@ jobs:
 
       - name: Clone fullstack-audit skill
         run: |
-          # Ajusta esta URL si tienes el skill en un repo privado
-          if [ -d "$HOME/.claude/skills/fullstack-audit" ]; then
-            ln -s "$HOME/.claude/skills/fullstack-audit" ./.skill
-          else
-            # Fallback: descarga mínima embebida (scripts críticos)
-            mkdir -p ./.skill/scripts ./.skill/patterns
-            # Si el skill está en un repo privado tuyo, descomenta:
-            # git clone https://github.com/<user>/fullstack-audit.git ./.skill
-            echo "⚠ skill no encontrado, usando checks inline"
-          fi
+          git clone --depth=1 https://github.com/LATS-13/fullstack-audit.git ./.skill
 
       - name: Detect stack
         id: stack
