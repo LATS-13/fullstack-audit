@@ -1,0 +1,140 @@
+# Copia este archivo a .github/workflows/fullstack-audit.yml en cada proyecto.
+# Corre fases 2 (estático), 4 (cruce cambios) y 5 (config) en cada PR y
+# comenta el resultado. No bloquea merge — solo informa.
+#
+# Para bloquear: añade `fail-on: P0` en la step "Run audit" y marca el job
+# como required en branch protection.
+
+name: fullstack-audit
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # para git diff con base
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install deps
+        run: npm ci --prefer-offline --no-audit || npm install
+
+      - name: Clone fullstack-audit skill
+        run: |
+          # Ajusta esta URL si tienes el skill en un repo privado
+          if [ -d "$HOME/.claude/skills/fullstack-audit" ]; then
+            ln -s "$HOME/.claude/skills/fullstack-audit" ./.skill
+          else
+            # Fallback: descarga mínima embebida (scripts críticos)
+            mkdir -p ./.skill/scripts ./.skill/patterns
+            # Si el skill está en un repo privado tuyo, descomenta:
+            # git clone https://github.com/<user>/fullstack-audit.git ./.skill
+            echo "⚠ skill no encontrado, usando checks inline"
+          fi
+
+      - name: Detect stack
+        id: stack
+        run: |
+          if [ -x ./.skill/scripts/detect-stack.sh ]; then
+            bash ./.skill/scripts/detect-stack.sh > stack.md || true
+            cat stack.md
+          fi
+
+      - name: Env-check (phase 5)
+        id: envcheck
+        run: |
+          if [ -x ./.skill/scripts/env-check.sh ]; then
+            bash ./.skill/scripts/env-check.sh > env-report.md || true
+          fi
+
+      - name: Static checks (phase 2)
+        id: static
+        run: |
+          {
+            echo "## Static checks"
+            echo ""
+            echo "### TypeScript"
+            if [ -f "tsconfig.json" ]; then
+              npx --no-install tsc --noEmit 2>&1 | head -50 || true
+            else
+              echo "_no tsconfig.json_"
+            fi
+            echo ""
+            echo "### Lint"
+            if [ -f ".eslintrc.js" ] || [ -f ".eslintrc.json" ] || [ -f "eslint.config.js" ]; then
+              npx --no-install eslint . --max-warnings=0 2>&1 | head -80 || true
+            else
+              echo "_no eslint config_"
+            fi
+            echo ""
+            echo "### Toxic patterns"
+            grep -rnE '(console\.(log|debug)|debugger|TODO|FIXME|XXX)' \
+              --include='*.ts' --include='*.vue' --include='*.js' \
+              server/ composables/ pages/ components/ utils/ lib/ 2>/dev/null \
+              | head -30 || echo "_limpio_"
+          } > static-report.md
+
+      - name: Cross-ref (phase 4)
+        id: crossref
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          {
+            echo "## Cross-ref (cambios en este PR)"
+            echo ""
+            echo "### Archivos tocados"
+            git diff --name-only "$BASE..$HEAD" | head -50
+            echo ""
+            echo "### Símbolos exportados modificados (posibles breaking changes)"
+            git diff "$BASE..$HEAD" -- '*.ts' '*.vue' '*.js' \
+              | grep -E '^[+-]\s*export' | head -30 || echo "_sin cambios en exports_"
+            echo ""
+            echo "### Migraciones SQL/DB"
+            git diff --name-only "$BASE..$HEAD" \
+              | grep -iE '(migration|schema|\.sql$)' || echo "_no hay_"
+          } > crossref-report.md
+
+      - name: Consolidate report
+        run: |
+          {
+            echo "# 🔍 fullstack-audit — PR #${{ github.event.pull_request.number }}"
+            echo ""
+            echo "_Fases 2 (estático) + 4 (cruce) + 5 (config)_"
+            echo ""
+            [ -f stack.md ] && { echo "## Stack"; cat stack.md; echo ""; }
+            [ -f env-report.md ] && { cat env-report.md; echo ""; }
+            [ -f static-report.md ] && { cat static-report.md; echo ""; }
+            [ -f crossref-report.md ] && { cat crossref-report.md; echo ""; }
+            echo "---"
+            echo "_Para auditoría completa → \`Audita con fullstack-audit\` en Claude Code_"
+          } > REPORT.md
+          cat REPORT.md
+
+      - name: Comment PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: fullstack-audit
+          path: REPORT.md
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-report
+          path: |
+            REPORT.md
+            stack.md
+            env-report.md
+            static-report.md
+            crossref-report.md
+          retention-days: 14
