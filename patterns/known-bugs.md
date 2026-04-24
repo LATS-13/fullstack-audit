@@ -185,3 +185,10 @@ Tras una auditoría, si encontraste un bug que NO está aquí:
 1. Reformúlalo como **patrón abstracto** (no específico al proyecto).
 2. Añade entrada con: descripción, por qué se escapa, cómo detectarlo (preferiblemente comando reproducible), fix recomendado, caso real (anonimizado si hace falta).
 3. Si el patrón es de **interacción** entre módulos → va en `interaction-traps.md` en su lugar.
+
+## P-013 — Drift config prod vs repo (install scripts, env var naming)
+- **Severidad:** P2
+- **Contexto:** Windows service install scripts que quedan desincronizados con el estado real del servicio tras una intervención manual. Idem env vars renombradas en hosting pero no en código/`.env.example`.
+- **Detección:** Fase 5 (config) — grep del nombre en scripts de instalación + comparación con estado actual.
+- **Fix:** re-sync del archivo al estado real. Nunca al revés (no tocar prod para "aplicar" el script).
+- **Visto en:** PharmaSuite oracle-bridge (F04-001, abril 2026).
